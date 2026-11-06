@@ -75,11 +75,4 @@ python track.py videos/mona-lisa.avi --no-flow           # только дете
 
 ## 5. Использованные источники
 
-1. Lowe D. G. Distinctive Image Features from Scale-Invariant Keypoints // IJCV, 2004.
-2. Rublee E., Rabaud V., Konolige K., Bradski G. ORB: an efficient alternative to SIFT or SURF // ICCV, 2011.
-3. Fischler M. A., Bolles R. C. Random Sample Consensus // Communications of the ACM, 1981.
-4. Lucas B. D., Kanade T. An Iterative Image Registration Technique with an Application to Stereo Vision // IJCAI, 1981.
-5. Bouguet J.-Y. Pyramidal Implementation of the Lucas-Kanade Feature Tracker, Intel, 2001.
-6. Hartley R., Zisserman A. Multiple View Geometry in Computer Vision, 2-е изд., 2004.
-7. Яковенко А. Оптический поток и оценка стерео диспаритета (лекция, `Оптический поток.pdf`).
-8. Документация OpenCV: `cv2.SIFT_create`, `cv2.ORB_create`, `cv2.findHomography`, `cv2.calcOpticalFlowPyrLK`. https://docs.opencv.org
+1. Документация OpenCV: `cv2.SIFT_create`, `cv2.ORB_create`, `cv2.findHomography`, `cv2.calcOpticalFlowPyrLK`. https://docs.opencv.org
