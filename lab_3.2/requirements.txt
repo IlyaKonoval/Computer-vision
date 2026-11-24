@@ -1,0 +1,21 @@
+# Поверх torch>=2.1 с CUDA. Код SUPIR: git clone https://github.com/Fanghua-Yu/SUPIR
+omegaconf==2.3.0
+open-clip-torch==2.24.0
+k-diffusion==0.1.1.post1
+pytorch-lightning
+einops
+kornia
+sentencepiece
+safetensors
+diffusers
+transformers
+huggingface_hub
+# данные и метрики
+opencv-python
+numpy
+pillow
+pandas
+matplotlib
+pyiqa
+lpips
+setuptools<81  # пакет clip (зависимость pyiqa) импортирует pkg_resources
