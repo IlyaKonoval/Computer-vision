@@ -1,74 +1,60 @@
-import torch
+"""Проверка логики маски на настоящем SpacedSampler из DiffBIR без весов и GPU.
 
-from masked_sampler import (feather_mask, make_masked_sampler_class, mask_to_latent, to_mask_tensor,
+Вместо ControlLDM — «модель», которая всегда предсказывает чистый латент target
+(в v-параметризации, как у DiffBIR v2.1). Запуск: python test_masked_sampler.py
+"""
+import os
+import sys
+
+import torch
+from omegaconf import OmegaConf
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path[:0] = [HERE, os.path.join(HERE, 'DiffBIR')]
+
+import masked_sampler  # noqa: E402,F401  (совместимость torch.Tuple до импорта DiffBIR)
+from diffbir.sampler import SpacedSampler  # noqa: E402
+from diffbir.utils.common import instantiate_from_config  # noqa: E402
+
+from masked_sampler import (MaskedSpacedSampler, feather_mask, mask_to_latent, to_mask_tensor,  # noqa: E402
                             upscale_mask)
 
-
-class StubRestoreEDMSampler:
-    s_churn, s_tmin, s_tmax, s_noise = 5.0, 0.0, float('inf'), 1.01
-
-    def __init__(self, num_steps=20):
-        self.num_steps = num_steps
-
-    def prepare_sampling_loop(self, x, cond, uc, num_steps):
-        sigmas = torch.cat([torch.linspace(14.6, 0.03, self.num_steps), torch.zeros(1)])
-        x = x * torch.sqrt(1.0 + sigmas[0] ** 2)
-        return x, x.new_ones([x.shape[0]]), sigmas, len(sigmas), cond, uc
-
-    def get_sigma_gen(self, num_sigmas):
-        return range(num_sigmas - 1)
-
-    def sampler_step(self, sigma, next_sigma, denoiser, x, cond, uc=None, gamma=0.0, x_center=None, **kw):
-        sigma_hat = sigma * (gamma + 1.0)
-        if gamma > 0:
-            x = x + torch.randn_like(x) * self.s_noise * (sigma_hat ** 2 - sigma ** 2).view(-1, 1, 1, 1) ** 0.5
-        denoised = denoiser(x, sigma_hat, cond, 1.0)
-        d = (x - denoised) / sigma_hat.view(-1, 1, 1, 1)
-        return x + d * (next_sigma - sigma_hat).view(-1, 1, 1, 1)
-
-    def __call__(self, denoiser, x, cond, uc=None, num_steps=None, x_center=None, control_scale=1.0,
-                 use_linear_control_scale=False, control_scale_start=0.0):
-        x, s_in, sigmas, n, cond, uc = self.prepare_sampling_loop(x, cond, uc, num_steps)
-        for i in self.get_sigma_gen(n):
-            gamma = min(self.s_churn / (n - 1), 2 ** 0.5 - 1)
-            x = self.sampler_step(s_in * sigmas[i], s_in * sigmas[i + 1], denoiser, x, cond, uc, gamma, x_center)
-        return x
-
-
-Masked = make_masked_sampler_class(StubRestoreEDMSampler)
+diffusion = instantiate_from_config(OmegaConf.load(os.path.join(HERE, 'DiffBIR', 'configs', 'inference',
+                                                                'diffusion_v2.1.yaml')))
+abar = torch.tensor(diffusion.alphas_cumprod if hasattr(diffusion, 'alphas_cumprod') else
+                    __import__('numpy').cumprod(1 - diffusion.betas), dtype=torch.float32)
 H = W = 128  # пиксели выхода -> латент 16x16
 target = torch.full((1, 4, H // 8, W // 8), 2.0)   # что «рисует» диффузия
 known = torch.full((1, 4, H // 8, W // 8), -1.0)   # что должно остаться вне маски
-denoiser = lambda x, sigma, c, cs: target.expand_as(x)
 
 
-def run(mask_lat, seed=0):
-    torch.manual_seed(seed)
-    noise = torch.randn_like(target)
-    return Masked()(denoiser, noise, cond={}, mask=mask_lat, x_known=known)
+def fake_model(x, model_t, cond):
+    a = abar[model_t].view(-1, 1, 1, 1)
+    return (a.sqrt() * x - target) / (1 - a).sqrt()  # v такое, что предсказанный x0 = target
 
 
-def run_base(seed=0):
-    torch.manual_seed(seed)
-    noise = torch.randn_like(target)
-    return StubRestoreEDMSampler()(denoiser, noise, cond={})
+def run(cls, **kw):
+    torch.manual_seed(0)
+    x_T = torch.randn_like(target)
+    sampler = cls(diffusion.betas, diffusion.parameterization, rescale_cfg=False)
+    return sampler.sample(fake_model, 'cpu', 20, tuple(target.shape), {}, None, 1.0, x_T=x_T.clone(),
+                          progress=False, **kw)
 
 
 def test_full_mask_equals_original():
     m = mask_to_latent(torch.ones(1, 1, H, W))
-    assert torch.equal(run(m), run_base()), 'mask=1 must reproduce the original sampler bit-exactly'
+    assert torch.equal(run(MaskedSpacedSampler, mask=m, x_known=known), run(SpacedSampler))
 
 
 def test_empty_mask_returns_known():
     m = mask_to_latent(torch.zeros(1, 1, H, W))
-    assert torch.allclose(run(m), known), 'mask=0 must return x_known'
+    assert torch.allclose(run(MaskedSpacedSampler, mask=m, x_known=known), known)
 
 
 def test_combined_mask():
     px = torch.zeros(1, 1, H, W)
     px[..., :, : W // 2] = 1  # левая половина
-    m = mask_to_latent(px, dilate_latent=1)
-    out = run(m)
+    out = run(MaskedSpacedSampler, mask=mask_to_latent(px, dilate_latent=1), x_known=known)
     lat_w = W // 8
     assert torch.allclose(out[..., :, lat_w // 2 + 1:], known[..., :, lat_w // 2 + 1:])
     assert torch.allclose(out[..., :, : lat_w // 2], target[..., :, : lat_w // 2], atol=1e-3)

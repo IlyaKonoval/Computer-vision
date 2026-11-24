@@ -16,7 +16,7 @@ from PIL import Image  # noqa: E402
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEGRADATIONS = ['bicubic', 'unknown', 'realesrgan']
 MASKS = ['ones', 'combined', 'zeros']
-MASK_LABELS = {'ones': 'маска = 1 (SUPIR везде)', 'combined': 'комбинированная', 'zeros': 'маска = 0 (bicubic)'}
+MASK_LABELS = {'ones': 'маска = 1 (DiffBIR везде)', 'combined': 'комбинированная', 'zeros': 'маска = 0 (bicubic)'}
 COLORS = {'ones': '#2a78d6', 'combined': '#1baf7a', 'zeros': '#eb6834'}  # фиксированные категориальные слоты
 TRANSITION = 24  # px: зона плавной склейки (dilate 8 + 3*sigma 4 + запас) — исключается из «вне маски»
 
@@ -93,7 +93,7 @@ def compute(args):
                            lpips_in=float(lm[inside].mean()), lpips_out=float(lm[outside].mean()),
                            clipiqa_in=np.mean([met.clip(sr[r]) for r in c_in]),
                            clipiqa_out=np.mean([met.clip(sr[r]) for r in c_out]))
-                # проверка корректности склейки: вне маски combined == bicubic, внутри ~ full SUPIR
+                # проверка корректности склейки: вне маски combined == bicubic, внутри ~ full DiffBIR
                 if mask == 'combined' and 'zeros' in outs:
                     row['psnr_out_vs_bicubic'] = psnr(sr, outs['zeros'], outside)
                 if mask == 'combined' and 'ones' in outs:
@@ -167,7 +167,7 @@ def summary_table(df, path):
     if 'psnr_out_vs_bicubic' in df:
         c = df[df['mask'] == 'combined']
         lines += ['', f"Склейка: PSNR(combined, bicubic) вне маски = {c['psnr_out_vs_bicubic'].min():.1f} дБ (мин.), "
-                      f"PSNR(combined, full SUPIR) внутри маски = {c['psnr_in_vs_full'].mean():.1f} дБ (сред.)"]
+                      f"PSNR(combined, full DiffBIR) внутри маски = {c['psnr_in_vs_full'].mean():.1f} дБ (сред.)"]
     with open(path, 'w', encoding='utf-8') as f:
         f.write('\n'.join(lines) + '\n')
     print('\n'.join(lines))
@@ -182,9 +182,9 @@ def contour(img, mask_px, color=(1.0, 0.85, 0.0)):
 
 
 def comparison_grids(args, out_dir):
-    """Для каждого изображения: LQ | bicubic | SUPIR (маска 1) | маска combined | HR, + увеличенный фрагмент."""
+    """Для каждого изображения: LQ | bicubic | DiffBIR (маска 1) | маска combined | HR, + увеличенный фрагмент."""
     ids = sorted(os.path.splitext(os.path.basename(p))[0] for p in glob.glob(os.path.join(args.data, 'hr', '*.png')))
-    titles = ['LQ (x4 меньше)', 'маска = 0 (bicubic)', 'маска = 1 (SUPIR)', 'комбинированная', 'HR (эталон)']
+    titles = ['LQ (x4 меньше)', 'маска = 0 (bicubic)', 'маска = 1 (DiffBIR)', 'комбинированная', 'HR (эталон)']
     for deg in DEGRADATIONS:
         rows = []
         for img_id in ids:
@@ -224,7 +224,7 @@ def comparison_grids(args, out_dir):
         sl = (slice(h // 2 - 192, h // 2 + 192), slice(w // 2 + 220, w // 2 + 604))  # правый край круга
         ims = [load(paths['zeros'])[sl], load(paths['ones'])[sl], load(paths['combined'])[sl], hr[sl]]
         fig, axes = plt.subplots(1, 4, figsize=(14, 3.8))
-        for ax, im, t in zip(axes, ims, ['bicubic', 'SUPIR, маска = 1', 'комбинированная (граница круга)', 'HR']):
+        for ax, im, t in zip(axes, ims, ['bicubic', 'DiffBIR, маска = 1', 'комбинированная (граница круга)', 'HR']):
             ax.imshow(im)
             ax.set_title(t, fontsize=10)
             ax.axis('off')

@@ -1,7 +1,9 @@
+import numpy as np
 import torch
 import torch.nn.functional as F
+from tqdm import tqdm
 
-LATENT_FACTOR = 8  # VAE SDXL уменьшает изображение в 8 раз
+LATENT_FACTOR = 8  # VAE Stable Diffusion уменьшает изображение в 8 раз
 
 def to_mask_tensor(mask, device=None):
     m = torch.as_tensor(mask, device=device).float()
@@ -55,55 +57,72 @@ def blend(fg, bg, alpha):
 # ---------------- сэмплер ----------------
 
 class MaskedSamplingMixin:
-    """Переопределяет __call__ у RestoreEDMSampler: добавляет параметры mask и x_known.
+    """Переопределяет SpacedSampler.sample из DiffBIR: добавляет параметры mask и x_known.
 
-    mask    — латентная маска (B или 1, 1, h, w), 1 = восстанавливать, 0 = оставить как есть;
+    mask    — латентная маска (1, 1, h, w), 1 = восстанавливать, 0 = оставить как есть;
     x_known — латент изображения, которое должно остаться вне маски (B, 4, h, w).
-    При mask=None или маске из одних единиц поведение совпадает с исходным сэмплером
-    (в т.ч. по случайным числам, т.е. результат идентичен при том же seed).
+    После каждого шага DDPM вне маски подставляется x_known, зашумлённый до уровня этого шага
+    (forward-процесс q(x_t | x_0), как в RePaint). На последнем шаге шум нулевой.
+    При маске из единиц сэмплер совпадает с исходным бит-в-бит (те же случайные числа).
     """
 
-    def __call__(self, denoiser, x, cond, uc=None, num_steps=None, x_center=None, control_scale=1.0,
-                 use_linear_control_scale=False, control_scale_start=0.0, mask=None, x_known=None):
+    @torch.no_grad()
+    def sample(self, model, device, steps, x_size, cond, uncond, cfg_scale, tiled=False, tile_size=-1,
+               tile_stride=-1, x_T=None, progress=True, mask=None, x_known=None):
         if mask is None or bool((mask > 0.5).all()):
-            return super().__call__(denoiser, x, cond, uc, num_steps, x_center, control_scale,
-                                    use_linear_control_scale, control_scale_start)
+            return super().sample(model, device, steps, x_size, cond, uncond, cfg_scale, tiled, tile_size,
+                                  tile_stride, x_T, progress)
         assert x_known is not None, 'x_known is required when mask is given'
 
-        x, s_in, sigmas, num_sigmas, cond, uc = self.prepare_sampling_loop(x, cond, uc, num_steps)
-        mask = mask.to(device=x.device, dtype=x.dtype)
-        x_known = x_known.to(device=x.device, dtype=x.dtype)
+        self.make_schedule(steps)
+        self.to(device)
+        if tiled:  # тайлинг касается только вызова U-Net; маска применяется ко всему латенту после шага
+            from diffbir.utils.common import make_tiled_fn
+            forward = model.forward
+            model.forward = make_tiled_fn(
+                lambda x_tile, t, c, hi, hi_end, wi, wi_end: forward(
+                    x_tile, t, {'c_txt': c['c_txt'], 'c_img': c['c_img'][..., hi:hi_end, wi:wi_end]}),
+                tile_size, tile_stride)
+        x = torch.randn(x_size, device=device, dtype=torch.float32) if x_T is None else x_T
+        mask = mask.to(device=device, dtype=x.dtype)
+        x_known = x_known.to(device=device, dtype=x.dtype)
 
-        x = self.replace_known(x, x_known, mask, sigmas[0])
-        for i in self.get_sigma_gen(num_sigmas):
-            gamma = (
-                min(self.s_churn / (num_sigmas - 1), 2 ** 0.5 - 1)
-                if self.s_tmin <= sigmas[i] <= self.s_tmax
-                else 0.0
-            )
-            x = self.sampler_step(
-                s_in * sigmas[i], s_in * sigmas[i + 1], denoiser, x, cond, uc, gamma, x_center,
-                control_scale=control_scale,
-                use_linear_control_scale=use_linear_control_scale,
-                control_scale_start=control_scale_start,
-            )
-            x = self.replace_known(x, x_known, mask, sigmas[i + 1])
+        total_steps = len(self.timesteps)
+        x = self.replace_known(x, x_known, mask, total_steps - 1)
+        timesteps = np.flip(self.timesteps)
+        bs = x_size[0]
+        for i, step in enumerate(tqdm(timesteps, total=total_steps, disable=not progress)):
+            model_t = torch.full((bs,), step, device=device, dtype=torch.long)
+            t = torch.full((bs,), total_steps - i - 1, device=device, dtype=torch.long)
+            x = self.p_sample(model, x, model_t, t, cond, uncond, self.get_cfg_scale(cfg_scale, step))
+            # x теперь соответствует шагу total_steps - i - 2 (или чистому латенту, если шаг был последним)
+            x = self.replace_known(x, x_known, mask, total_steps - i - 2)
+        if tiled:
+            model.forward = forward
         return x
 
-    @staticmethod
-    def replace_known(x, x_known, mask, sigma):
-        """Вне маски подставить известный латент с шумом уровня sigma (forward-процесс EDM)."""
-        noised_known = x_known + sigma * torch.randn_like(x_known)
-        return mask * x + (1 - mask) * noised_known
+    def replace_known(self, x, x_known, mask, idx):
+        """Вне маски: x_known, зашумлённый по расписанию до шага idx (idx < 0 — без шума)."""
+        if idx < 0:
+            noised = x_known
+        else:
+            a = self.sqrt_alphas_cumprod[idx]
+            s = self.sqrt_one_minus_alphas_cumprod[idx]
+            noised = a * x_known + s * torch.randn_like(x_known)
+        return mask * x + (1 - mask) * noised
 
 
 def make_masked_sampler_class(base):
     return type('Masked' + base.__name__, (MaskedSamplingMixin, base), {})
 
 
-try:  # внутри репозитория SUPIR — готовый класс для instantiate_from_config
-    from sgm.modules.diffusionmodules.sampling import RestoreEDMSampler
+if not hasattr(torch, 'Tuple'):  # DiffBIR писался под torch 2.2 и использует torch.Tuple в аннотациях
+    import typing
+    torch.Tuple = typing.Tuple
 
-    MaskedRestoreEDMSampler = make_masked_sampler_class(RestoreEDMSampler)
+try:  # при наличии DiffBIR в sys.path — готовый класс
+    from diffbir.sampler import SpacedSampler
+
+    MaskedSpacedSampler = make_masked_sampler_class(SpacedSampler)
 except ImportError:
-    MaskedRestoreEDMSampler = None
+    MaskedSpacedSampler = None

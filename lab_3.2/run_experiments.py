@@ -6,8 +6,7 @@ import time
 
 import torch
 
-from supir_inpaint import (add_model_args, encode_prompts, load_lq, load_mask, load_supir, masked_sample,
-                           save_img)
+from diffbir_inpaint import DEFAULTS, DiffBIR, load_lq, load_mask, masked_restore, save_img
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEGRADATIONS = ['bicubic', 'unknown', 'realesrgan']
@@ -16,7 +15,9 @@ MASKS = ['ones', 'zeros', 'combined']
 
 def main():
     ap = argparse.ArgumentParser()
-    add_model_args(ap)
+    ap.add_argument('--steps', type=int, default=DEFAULTS['steps'])
+    ap.add_argument('--cfg_scale', type=float, default=DEFAULTS['cfg_scale'])
+    ap.add_argument('--seed', type=int, default=231)
     ap.add_argument('--data', default=os.path.join(HERE, 'data'))
     ap.add_argument('--out', default=os.path.join(HERE, 'results'))
     ap.add_argument('--limit', type=int, default=0, help='обработать только первые N изображений (для пробы)')
@@ -26,8 +27,7 @@ def main():
     if args.limit:
         ids = ids[:args.limit]
 
-    model = load_supir(args.supir_root, args.sdxl_ckpt, args.supir_ckpt, args.clip1_path, args.clip2_path)
-    cond = encode_prompts(model)
+    model = DiffBIR()
 
     timing_path = os.path.join(args.out, 'timing.csv')
     os.makedirs(args.out, exist_ok=True)
@@ -47,7 +47,8 @@ def main():
                     torch.cuda.reset_peak_memory_stats()
                     torch.cuda.synchronize()
                     t0 = time.time()
-                    out, raw = masked_sample(model, cond, lq_up, mask, seed=args.seed, num_steps=args.steps)
+                    out, raw = masked_restore(model, lq_up, mask, seed=args.seed, steps=args.steps,
+                                              cfg_scale=args.cfg_scale)
                     torch.cuda.synchronize()
                     dt = time.time() - t0
                     save_img(out, out_path)

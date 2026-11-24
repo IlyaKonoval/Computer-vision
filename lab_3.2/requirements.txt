@@ -1,15 +1,14 @@
-# Поверх torch>=2.1 с CUDA. Код SUPIR: git clone https://github.com/Fanghua-Yu/SUPIR
-omegaconf==2.3.0
-open-clip-torch==2.24.0
-k-diffusion==0.1.1.post1
-pytorch-lightning
+# torch + torchvision с CUDA ставятся отдельно:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+# Код DiffBIR: git clone https://github.com/XPixelGroup/DiffBIR lab_3.2/DiffBIR
+omegaconf
 einops
-kornia
-sentencepiece
-safetensors
-diffusers
-transformers
-huggingface_hub
+timm
+scipy
+torchsde
+ftfy
+regex
+tqdm
 # данные и метрики
 opencv-python
 numpy
