@@ -218,3 +218,14 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# lab_2: видео и крупные артефакты
+lab_2/videos/
+lab_2/test-videos.zip
+lab_2/video_lab.MOV
+lab_2/results/*
+!lab_2/results/fig_*.jpg
+
+# lab_3.2: архивы DIV2K и полноразмерные выходы (в отчёте — сетки и метрики)
+lab_3.2/data/div2k_zip/
+lab_3.2/results/sr/
