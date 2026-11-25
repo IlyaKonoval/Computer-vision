@@ -119,22 +119,6 @@ flowchart LR
   На Windows процессу задан лимит 92 % видеопамяти: иначе при нехватке драйвер молча выносит память в RAM
   и сэмплинг замедляется в ~7 раз.
 
-### 2.5 Запуск
-```bash
-cd lab_3.2
-python -m venv .venv && .venv/Scripts/activate
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
-pip install -r requirements.txt
-git clone https://github.com/XPixelGroup/DiffBIR
-# веса -> weights/ (ссылки выше)
-python prepare_data.py            # данные (скачает ~500 МБ DIV2K)
-python test_masked_sampler.py     # проверка логики маски
-python run_experiments.py         # 45 запусков -> results/sr/
-python evaluate.py                # метрики, таблицы, графики -> results/
-# одна картинка с произвольной маской:
-python diffbir_inpaint.py --lq data/lq/realesrgan/0801.png --mask data/masks/combined.png --out out.png
-```
-
 ## 3. Результаты и тестирование
 
 ### 3.1 Корректность алгоритма
@@ -199,20 +183,3 @@ python diffbir_inpaint.py --lq data/lq/realesrgan/0801.png --mask data/masks/com
 Модифицированный сэмплер DiffBIR v2.1 восстанавливает заданный фрагмент при увеличении ×4. Подстановка известного латента на каждом шаге удерживает контекст вне маски, а финальная склейка даёт точное совпадение с bicubic за пределами переходной зоны. Это подтверждено тестами сэмплера и сравнением всех 15 результатов с комбинированной маской.
 
 На пяти изображениях DIV2K локальное восстановление в среднем улучшило LPIPS и CLIP-IQA при каждой из трёх деградаций. Снижение среднего PSNR показывает, что улучшение воспринимаемого качества сопровождается отклонениями от эталона. Применение маски в этой реализации почти не меняет время одного прогона.
-
-## 5. Использованные источники
-
-1. Lin X. et al. *DiffBIR: Towards Blind Image Restoration with Generative Diffusion Prior*, ECCV 2024. https://arxiv.org/abs/2308.15070, код: https://github.com/XPixelGroup/DiffBIR
-2. Ho J., Jain A., Abbeel P. *Denoising Diffusion Probabilistic Models*, NeurIPS 2020. https://arxiv.org/abs/2006.11239
-3. Rombach R. et al. *High-Resolution Image Synthesis with Latent Diffusion Models*, CVPR 2022. https://arxiv.org/abs/2112.10752
-4. Zhang L., Rao A., Agrawala M. *Adding Conditional Control to Text-to-Image Diffusion Models* (ControlNet), ICCV 2023. https://arxiv.org/abs/2302.05543
-5. Lin S. et al. *Common Diffusion Noise Schedules and Sample Steps are Flawed* (zero-SNR), WACV 2024. https://arxiv.org/abs/2305.08891
-6. Liang J. et al. *SwinIR: Image Restoration Using Swin Transformer*, ICCVW 2021. https://arxiv.org/abs/2108.10257
-7. Lugmayr A. et al. *RePaint: Inpainting using Denoising Diffusion Probabilistic Models*, CVPR 2022. https://arxiv.org/abs/2201.09865
-8. Avrahami O. et al. *Blended Latent Diffusion*, SIGGRAPH 2023. https://arxiv.org/abs/2206.02779
-9. Wang X. et al. *Real-ESRGAN: Training Real-World Blind Super-Resolution with Pure Synthetic Data*, ICCVW 2021. https://arxiv.org/abs/2107.10833
-10. Agustsson E., Timofte R. *NTIRE 2017 Challenge on Single Image Super-Resolution: Dataset and Study* (DIV2K). https://data.vision.ee.ethz.ch/cvl/DIV2K/
-11. Zhang R. et al. *The Unreasonable Effectiveness of Deep Features as a Perceptual Metric* (LPIPS), CVPR 2018. https://arxiv.org/abs/1801.03924
-12. Wang J. et al. *Exploring CLIP for Assessing the Look and Feel of Images* (CLIP-IQA), AAAI 2023. https://arxiv.org/abs/2207.12396
-13. Chen C. et al. *pyiqa: Image Quality Assessment Toolbox*. https://github.com/chaofengc/IQA-PyTorch
-14. Jiménez Á. B. *Mixture of Diffusers for scene composition and high resolution image generation*, 2023. https://arxiv.org/abs/2302.02412
