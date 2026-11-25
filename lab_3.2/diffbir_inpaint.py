@@ -1,11 +1,3 @@
-"""DiffBIR v2.1 + маска: восстановление (SR x4) только выбранной области изображения.
-
-Код DiffBIR не изменяется: используется его модель (SwinIR + ControlLDM на Stable Diffusion 2.1),
-а сэмплер SpacedSampler заменяется на MaskedSpacedSampler из masked_sampler.py.
-
-Пример:
-    python diffbir_inpaint.py --lq data/lq/realesrgan/0801.png --mask data/masks/combined.png --out out.png
-"""
 import argparse
 import os
 import sys
@@ -19,9 +11,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 DIFFBIR_ROOT = os.path.join(HERE, 'DiffBIR')
 WEIGHTS_DIR = os.path.join(HERE, 'weights')
 WEIGHTS = {
-    'swinir': 'realesrgan_s4_swinir_100k.pth',      # stage 1: SwinIR, обучен на деградациях Real-ESRGAN
-    'sd': 'sd2.1-base-zsnr-laionaes5.ckpt',          # Stable Diffusion 2.1 base (zero-SNR, v-prediction)
-    'control': 'DiffBIR_v2.1.pt',                    # stage 2: IRControlNet DiffBIR v2.1
+    'swinir': 'realesrgan_s4_swinir_100k.pth',
+    'sd': 'sd2.1-base-zsnr-laionaes5.ckpt',
+    'control': 'DiffBIR_v2.1.pt',
 }
 WEIGHTS_URL = 'https://huggingface.co/lxq007/DiffBIR-v2/resolve/main/'
 
@@ -56,7 +48,6 @@ def _load_ckpt(name):
 
 
 class DiffBIR:
-    """Модели DiffBIR v2.1: SwinIR (очистка) -> ControlLDM (генерация деталей) -> VAE."""
 
     def __init__(self, device='cuda', dtype=torch.float16):
         from omegaconf import OmegaConf
@@ -73,7 +64,6 @@ class DiffBIR:
         sd = _load_ckpt('sd')
         _, missing = self.cldm.load_pretrained_sd(sd)
         del sd
-        # в чекпойнте SD 2.x нет последнего слоя CLIP и проекций: берётся предпоследний слой (penultimate)
         unused_clip = ('cond_stage_model.model.transformer.resblocks.23.', 'cond_stage_model.model.logit_scale',
                        'cond_stage_model.model.text_projection')
         missing = [k for k in missing if not k.startswith(unused_clip)]
@@ -84,12 +74,10 @@ class DiffBIR:
 
         self.diffusion = instantiate_from_config(cfg('diffusion_v2.1.yaml')).to(device)
         self.text_cache = {}
-        self.cldm.clip.to('cpu')  # текстовый энкодер (1.4 ГБ) нужен только для промптов -> держим на CPU
+        self.cldm.clip.to('cpu')
         for prompt in (POS_PROMPT, NEG_PROMPT):
             self.text(prompt)
         if device == 'cuda':
-            # На Windows при нехватке видеопамяти драйвер молча выносит её в RAM и всё замедляется
-            # в разы; лимит превращает это в явную ошибку OOM.
             torch.cuda.set_per_process_memory_fraction(0.92)
             torch.cuda.empty_cache()
 
@@ -105,7 +93,6 @@ class DiffBIR:
 
     @torch.no_grad()
     def clean(self, img):
-        """Stage 1: SwinIR убирает шум/размытие/JPEG; вход и выход (1,3,H,W) в [0,1]."""
         h, w = img.shape[2:]
         ph, pw = (-h) % 64, (-w) % 64
         out = self.cleaner(F.pad(img, (0, pw, 0, ph)))
@@ -122,12 +109,6 @@ class DiffBIR:
 
 @torch.no_grad()
 def masked_restore(model, lq_up, mask_px, seed=231, pos_prompt=POS_PROMPT, neg_prompt=NEG_PROMPT, **kw):
-    """SR-inpainting.
-
-    lq_up   — LQ, увеличенный bicubic до выходного размера, (1,3,H,W) в [0,1], H и W кратны 64
-    mask_px — маска выходного разрешения (1,1,H,W), 1 = восстанавливать
-    Возвращает (out, sr): out — склейка, sr — выход диффузии до склейки (None при пустой маске).
-    """
     from diffbir.utils.common import wavelet_reconstruction
 
     p = {**DEFAULTS, **kw}
@@ -151,8 +132,6 @@ def masked_restore(model, lq_up, mask_px, seed=231, pos_prompt=POS_PROMPT, neg_p
         model.cldm.control_scales = [p['strength']] * 13
         sampler = MaskedSpacedSampler(model.diffusion.betas, model.diffusion.parameterization, rescale_cfg=False)
         x_T = torch.randn(c_img.shape, device=c_img.device, dtype=torch.float32)
-        # SD 2.1-base обучена на 512x512: U-Net считается тайлами 512 px с перекрытием (как в DiffBIR),
-        # иначе attention на латенте 128x128 не помещается в 8 ГБ
         tiled = min(c_img.shape[2:]) * 8 > p['cldm_tile']
         z = sampler.sample(model.cldm, model.device, p['steps'], tuple(c_img.shape), cond, uncond, p['cfg_scale'],
                            tiled=tiled, tile_size=p['cldm_tile'] // 8, tile_stride=p['cldm_stride'] // 8,

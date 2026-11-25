@@ -3,7 +3,7 @@ import torch
 import torch.nn.functional as F
 from tqdm import tqdm
 
-LATENT_FACTOR = 8  # VAE Stable Diffusion уменьшает изображение в 8 раз
+LATENT_FACTOR = 8
 
 def to_mask_tensor(mask, device=None):
     m = torch.as_tensor(mask, device=device).float()
@@ -41,11 +41,6 @@ def gaussian_blur(mask, sigma):
 
 
 def feather_mask(mask_px, dilate_px=8, sigma=4.0):
-    """Плавная маска для финальной склейки в пикселях.
-
-    Сначала расширяем маску на dilate_px (там SR ещё корректен, т.к. латентная маска шире),
-    затем размываем. Пиксели дальше ~dilate_px + 3*sigma от маски остаются ровно bicubic.
-    """
     m = gaussian_blur(dilate(mask_px, dilate_px), sigma)
     return m.clamp(0, 1)
 
@@ -57,15 +52,6 @@ def blend(fg, bg, alpha):
 # ---------------- сэмплер ----------------
 
 class MaskedSamplingMixin:
-    """Переопределяет SpacedSampler.sample из DiffBIR: добавляет параметры mask и x_known.
-
-    mask    — латентная маска (1, 1, h, w), 1 = восстанавливать, 0 = оставить как есть;
-    x_known — латент изображения, которое должно остаться вне маски (B, 4, h, w).
-    После каждого шага DDPM вне маски подставляется x_known, зашумлённый до уровня этого шага
-    (forward-процесс q(x_t | x_0), как в RePaint). На последнем шаге шум нулевой.
-    При маске из единиц сэмплер совпадает с исходным бит-в-бит (те же случайные числа).
-    """
-
     @torch.no_grad()
     def sample(self, model, device, steps, x_size, cond, uncond, cfg_scale, tiled=False, tile_size=-1,
                tile_stride=-1, x_T=None, progress=True, mask=None, x_known=None):
@@ -76,7 +62,7 @@ class MaskedSamplingMixin:
 
         self.make_schedule(steps)
         self.to(device)
-        if tiled:  # тайлинг касается только вызова U-Net; маска применяется ко всему латенту после шага
+        if tiled:
             from diffbir.utils.common import make_tiled_fn
             forward = model.forward
             model.forward = make_tiled_fn(
@@ -102,7 +88,6 @@ class MaskedSamplingMixin:
         return x
 
     def replace_known(self, x, x_known, mask, idx):
-        """Вне маски: x_known, зашумлённый по расписанию до шага idx (idx < 0 — без шума)."""
         if idx < 0:
             noised = x_known
         else:
@@ -116,11 +101,11 @@ def make_masked_sampler_class(base):
     return type('Masked' + base.__name__, (MaskedSamplingMixin, base), {})
 
 
-if not hasattr(torch, 'Tuple'):  # DiffBIR писался под torch 2.2 и использует torch.Tuple в аннотациях
+if not hasattr(torch, 'Tuple'):
     import typing
     torch.Tuple = typing.Tuple
 
-try:  # при наличии DiffBIR в sys.path — готовый класс
+try:
     from diffbir.sampler import SpacedSampler
 
     MaskedSpacedSampler = make_masked_sampler_class(SpacedSampler)
